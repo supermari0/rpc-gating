@@ -1,4 +1,3 @@
-PyYAML
 ansible
 appdirs
 click
@@ -6,8 +5,10 @@ github3.py
 jenkins-job-builder
 jenkinsapi
 jira
+jmespath
 packaging
 pyrax
 python-dateutil
+PyYAML
 rackspace_monitoring
 six

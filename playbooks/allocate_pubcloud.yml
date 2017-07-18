@@ -2,29 +2,56 @@
 - hosts: localhost
   connection: local
   gather_facts: False
+  vars:
+    all_regions:
+      - IAD
+      - DFW
+      - ORD
+      - HKG
+      - SYD
+    # retries are used as a mechanism for waiting for capacity
+    # as we don't have a mechanism for queuing jobs once
+    # they get this far
+    instance_boot_retries: 3
   tasks:
-    - name: Provision a set of public cloud instances
-      local_action:
-          module: rax
-          name: "{{ name }}"
-          flavor: "{{ flavor }}"
-          image: "{{ image }}"
-          count: "{{ count }}"
-          key_name: "{{ keyname }}"
-          region: "{{ region }}"
-          wait: yes
-          wait_timeout: 900
-          auto_increment: no
-      register: rax
-      until: rax|success
-      retries: 120
-      delay: 60
 
-    - name: Display rax output on failure
-      debug:
-        var: rax
+    # region should be a CSV string.
+    # Primary regions are those specified in the region var,
+    # they are tried first in a random order. After that,
+    # the rest of the regions are tried in a random order.
+
+    - name: Create primary region list
+      set_fact:
+        regions: "{{ region.split(',')|map('trim')|map('upper')|shuffle * instance_boot_retries }}"
+
+    - name: Create fallback region list
+      set_fact:
+        fallback_regions: "{{ all_regions|difference(regions)|shuffle }}"
+
+      # As this is a with_items loop not, do-until, we have to use
+      # failed_when: false. Otherwise the loop would exit after
+      # the first failure.
+      # When is used to skip further attempts once instances have booted.
+    - name: Provision a set of public cloud instances
+      rax:
+        name: "{{ name }}"
+        flavor: "{{ flavor }}"
+        image: "{{ image }}"
+        count: "{{ count }}"
+        key_name: "{{ keyname }}"
+        region: "{{ item }}"
+        wait: yes
+        wait_timeout: 900
+        auto_increment: no
+      register: result
+      with_items: "{{ regions + fallback_regions }}"
       when:
-        - rax.success|length < count
+        - "{{ result is undefined or 'success' not in result or result.success|length != count }}"
+      failed_when: false
+
+    - name: Extract instance boot result from loop results array
+      set_fact:
+        rax: "{{ (result |json_query('results[?changed]'))[0] }}"
 
     - name: Fail on duplicate instance
       fail:
@@ -41,7 +68,8 @@
     - name: Fail if the required number of instances aren't available
       fail:
         msg: "At least one public cloud instance failed to start :("
-      when: rax.success|length < count
+      when:
+        - rax.success|length < count
 
     - name: Write inventory
       copy:
@@ -51,14 +79,24 @@
 
           [hosts]
           {% for instance in rax.success %}
-          {{instance.name}} ansible_host={{instance.accessIPv4}} ansible_user=root
+          {{instance.name}} ansible_host={{instance.accessIPv4}} ansible_user=root rax_region:{{rax.item}}
           {% endfor %}
         dest: '{{lookup("env", "WORKSPACE")}}/rpc-gating/playbooks/inventory/hosts'
 
     - name: Wait for SSH to be available on all hosts
-      wait_for: port=22 host="{{ item.accessIPv4 }}"
+      wait_for:
+        port: 22
+        host: "{{ item.accessIPv4 }}"
       with_items: "{{ rax.success }}"
 
-    - name: Wait an additional amount of time for any remaning startup tasks to finish
+    - name: Wait for startup tasks to finish (OnMetal)
       pause:
         minutes: 5
+      when:
+        - "'onmetal' in flavor"
+
+    - name: Wait for startup tasks to finish (instance)
+      pause:
+        minutes: 1
+      when:
+        - "'onmetal' not in flavor"

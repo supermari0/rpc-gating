@@ -45,6 +45,7 @@ def cleanup(Map args){
   withEnv(['ANSIBLE_FORCE_COLOR=true']){
     withCredentials(common.get_cloud_creds()){
       dir("rpc-gating/playbooks"){
+        unstash("pubcloud_inventory")
         common.install_ansible()
         pyrax_cfg = common.writePyraxCfg(
           username: env.PUBCLOUD_USERNAME,
@@ -55,6 +56,7 @@ def cleanup(Map args){
             playbooks: ['cleanup_pubcloud.yml'],
             args: [
               "--private-key=\"${env.JENKINS_SSH_PRIVKEY}\"",
+              "-i inventory"
             ],
             vars: [
               "instance_name": instance_name,
