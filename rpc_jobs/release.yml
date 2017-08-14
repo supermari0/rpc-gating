@@ -1,0 +1,47 @@
+- job:
+    name: RE-Release
+    project-type: workflow
+    concurrent: false
+    parameters:
+      - rpc_gating_params
+      - string:
+          name: RELEASE_VERSION
+          description: |
+            The version that will be tagged by this job
+      - string:
+          name: NEXT_VERSION
+          description: |
+            The version that will be released after the next stabalisation
+            period.
+      - string:
+          name: MAINLINE
+          description: The mainline branch to work from
+      - string:
+          name: REPO_URL
+          description: |
+            URL of the working repo.
+            Should be git@github.com:owner/repo
+      - string:
+          name: STAGES
+          description: |
+            Items to run. Options:
+              Tag,
+              Update RC Branch
+          default: >-
+            Tag,
+            Update RC Branch
+    dsl: |
+      if (env.RELEASE_VERSION == "" || env.NEXT_VERSION == "" || env.MAINLINE == ""){
+        throw new Exception("RELEASE_VERSION, NEXT_VERSION and MAINLINE parameters are all required.")
+      }
+      library "rpc-gating@${RPC_GATING_BRANCH}"
+      common.shared_slave(){
+      stabalisation_branch = "${MAINLINE}-rc"
+      release.checkout(REPO_URL, stabalisation_branch)
+      common.conditional_stage(
+        stage_name: "Tag",
+        stage: { release.tag(RELEASE_VERSION, stabalisation_branch) })
+      common.conditional_stage(
+        stage_name: "Update RC Branch",
+        stage: { release.update_rc_branch() })
+      }
